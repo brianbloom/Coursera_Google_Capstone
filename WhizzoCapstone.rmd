@@ -1,0 +1,341 @@
+---
+title: "Seeking the Ideal Chocolates for Whizzo"
+output: html_notebook
+---
+Author: Brian Bloom
+Y
+
+This is an analysis of candidates for cocoa bean selection for the [fictional] Whizzo Chocolate Company. In it, I complete the following:
+ - identify and import two sources of chocolate bar ratings
+ - clean and filter them for just single varietal chocolates
+ - use z-scales to match up their scoring systems
+ - compute the mean for each origin country to identify the top ranked ones
+ - import production data to identify what countries are seeing a decline in production output
+ - filter those countries out of further consideration
+ - associate each country with the geographic region it's in
+ - sort the data to show which regions are best candidates for selecting importers
+ - produce a list of the top rated varietals for each country to aid in selecting good cocoa options
+
+```{r Get us up to date, include=FALSE}
+update.packages()
+```
+
+Prepare to load raw data from Excel spreadsheets
+```{r preload, include=FALSE}
+install.packages("tidyverse")
+install.packages("readxl")
+library(readxl)
+install.packages("skimr")
+library(skimr)
+```
+
+
+The first dataset to be analyzed is the "Flavors of Cacao" ratings table of more than 2400 chocolate bars.
+
+```{r flavorsratings}
+library(readxl)
+getwd()
+xls_flavratings <- read_excel("FlavorsOfCacaoRAW.xlsx")
+
+```
+
+Let's look at the country origins and verify they are clean enough to do some grouping.
+
+```{r assess hygiene of country names, include=FALSE}
+library("dplyr")
+tmp_countries <- tibble(xls_flavratings$"Country of Bean Origin")
+
+```
+```{r produce counts per country}
+tmp_countries <- rename(tmp_countries,origin= "xls_flavratings$\"Country of Bean Origin\"")
+table(tmp_countries)
+```
+Visually inspecting this, we don't see any dupes from misspellings (although there is a double "Sao Tome & Principe" entry.. we will mentally note that and only take action if it's a highly rated contender).
+
+We will probably exclude the "Blended" category since we can't ascertain which countries those include. So we can go back to working with the full Flavors of Cacao data set now.
+
+```{r rename columns and produce simpler Flavratings dataset }
+xls_flavratings %>%
+  rename(origin = "Country of Bean Origin", varietal = "Specific Bean Origin or Bar Name", rating = "Rating") %>%
+  select(origin,varietal, rating) -> flavratings
+```
+
+This pulls the columns we care about into a smaller structure. I'm preserving the varietal information just in case they ask for that additional information from the leading sources. Now let's get to the good stuff and find those leading sources...
+
+```{r Verify we can compute the higher scoring sources}
+flavratings %>%
+  group_by(origin) %>%
+  filter(origin != "Blend") %>%
+  summarize(avgrating = mean(rating)) %>%
+  arrange(-avgrating)
+```
+So we got this taster's rankings summarized, but I am a bit concerned that the top two are origins with only 2 bars each, which doesn't lend a lot of statistical confidence. Also, more concerning, is that the combo of Sao Tome & Principe did indeed show up and highly ranked, but individually both places are very poorly ranked, which also does not inspire confidence.  I may need to implement a threshold number of bars to screen out little anomalies like this.
+
+But before I start removing data, let's also import the second spreadsheet of rankings and get a feel for the noise in that dataset.
+
+```{r import cspotratings}
+xls_cspotratings <- read_excel("CSpotRAW.xlsx")
+```
+
+```{r assess contents}
+glimpse(xls_cspotratings)
+```
+
+This ratings dataset is fairly long and comprehensive as well.  We see a number of "Flavored" bars we will want to exclude, since those ratings could be based on the additional ingredients more than the chocolate base. Let's first check out the cleanliness of the origin info ("SOURCE" in this set)
+
+```{r cspot countries hygiene}
+table(xls_cspotratings$SOURCE)
+```
+We can see a few errors we'll want to correct:
+ - Columbia is a misspelled entry
+ - Nicaragua has an extra NIcaragua entry
+So let's convert those values first so they will merge together properly
+
+```{r cspot cleanup}
+xls_cspotratings$SOURCE = gsub("Columbia","Colombia",xls_cspotratings$SOURCE)
+xls_cspotratings$SOURCE = gsub("NIcaragua","Nicaragua",xls_cspotratings$SOURCE)
+table(xls_cspotratings$SOURCE)
+```
+```{r distill into simper Cspot ratings}
+xls_cspotratings %>%
+  filter(TYPE != "Flavored") %>%
+  rename(rating = "RATING.", origin = "SOURCE", varietal = "STRAIN" ) %>%
+  select(origin,varietal, rating) -> cspotratings
+```
+
+Now let's reconcile the differences in the names between the two ratings datasets by diffing both directions. Then I'll manually tweak them to match.
+
+
+```{r compare countries between datasets}
+setdiff(flavratings$origin, cspotratings$origin)
+setdiff(cspotratings$origin, flavratings$origin )
+```
+
+I will standardize on simpler non-accented characters to make analysis easier. We can re-add any special characters when we make our presentation. Hawaii is the only U.S.A. entry, so we'll just standardize on the country name. We'll just ignore "Heaven".
+
+```{r standardizing cspotratings to converge}
+cspotratings$origin = gsub("São Tomé","Sao Tome",cspotratings$origin)
+cspotratings$origin = gsub("Príncipe","Principe",cspotratings$origin)
+cspotratings$origin = gsub("St. Vincent Grenadines","St.Vincent-Grenadines",cspotratings$origin)
+cspotratings$origin = gsub("Hawai'i USA","U.S.A.",cspotratings$origin)
+```
+
+Checking for the mismatches now:
+
+```{r rechecking}
+setdiff(flavratings$origin, cspotratings$origin)
+setdiff(cspotratings$origin, flavratings$origin)
+```
+
+This looks complete.  The only remainders are true cases where something existed in one but not the other.  We should be able to merge the data successfully now. Before we do so, the last remaining difference is that the ratings are numerical in the Flavratings but strings in CSpotratings. That will be easier to correct now.
+
+```{r fix rating type}
+  cspotratings$rating <- as.numeric(cspotratings$rating)
+```
+
+So that gives us numbers in both data sets but now I've noticed that one scale goes to 5 and the other only to 4. Let's visualize these in a quick histogram to see what's going on
+
+```{r assessing rating scales: cspotratings}
+library(ggplot2)
+ggplot(data = cspotratings,aes(x=rating)) + geom_histogram(fill="red")
+```
+```{r assessing rating scales: flavratings}
+ggplot(data = flavratings,aes(x=rating)) + geom_histogram(fill="blue")
+```
+So they look similar, albeit with different max numbers.  Let's run some very quick stats to see if they are close enough to merge, or if we need to scale or convert them...
+```{r compare stats of ratings}
+cspotratings %>%
+  summarise(cmean = mean(rating, na.rm=TRUE), cmedian = median(rating, na.rm=TRUE), csd = sd(rating, na.rm=TRUE))
+flavratings %>%
+  summarise(fmean = mean(rating, na.rm=TRUE), fmedian = median(rating, na.rm=TRUE), fsd = sd(rating, na.rm=TRUE))
+```
+
+While the means and medians are remarkably close, the disparity of standard deviation is pretty large. So to correct for this, since we don't care about the exact rating numbers, but rather, which countries are best, I will make a z-score version of the ratings to let us "compare apples to apples".
+
+```{r generating z-scores}
+library(magrittr)
+cspotratings %<>% mutate(zrate = (rating - mean(rating, na.rm=TRUE))/sd(rating, na.rm=TRUE))
+flavratings %<>% mutate(zrate = (rating - mean(rating, na.rm=TRUE))/sd(rating, na.rm=TRUE))
+```
+
+So let's recheck to see if the new z-scores are more matching..
+
+```{r comparing z-score}
+cspotratings %>%
+  summarise(cmean = mean(zrate, na.rm=TRUE), cmedian = median(zrate, na.rm=TRUE), csd = sd(zrate, na.rm=TRUE))
+flavratings %>%
+  summarise(fmean = mean(zrate, na.rm=TRUE), fmedian = median(zrate, na.rm=TRUE), fsd = sd(zrate, na.rm=TRUE))
+```
+
+They both have a mean of zero and an SD of 1, as expected for a z-score.. The medians vary a bit, but given the tails differ between them, that's probably fine. So now I will append the two data sets into one larger one:
+
+```{r combine ratings data}
+allratings <- rbind(cspotratings, flavratings)
+```
+
+Now let's finally see which countries have the best overall ratings! I am going to cap our results to places with 10 or more ratings, because with around 4000 bars, those origins only represent 1/4 of 1 % of the samples, which is probably too volatile to have statistical confidence in those numbers.
+
+```{r show top ratings}
+allratings %>%
+  group_by(origin) %>%
+  summarize(mean = mean(zrate, na.rm=TRUE), count=n()) %>%
+  arrange(-mean) %>%
+  filter(count >= 10) %>%
+  filter(mean >= 0) %>%
+  print(n=30) -> contenders
+```
+This gives us every origin with an above average rating (zrate > 0, a perk of using z-scores), plus the counts of how many samples there were for each.
+We can easily see that there are multiple world regions represented, so we now need to factor in how to pick places that can be sourced for as few importers as possible, as well as filter out places that are seeing dwindling production.
+
+```{r load regions and production stats}
+xls_regions <- read_excel("regions.xlsx")
+xls_prod <- read_excel("cocoaproductionRAW.xlsx")
+```
+
+First we'll screen out the diminishing productions, and then look at the remainder to see who their importers are. First we need to check to see that the country names are listed in the production data. (We don't care if there are production countries not in our bar data)
+
+```{r check production names}
+setdiff(allratings$origin,xls_prod$Country )
+```
+Given that there are so many of these, let's first rule out the ones we don't care about due to low ratings.
+
+Can be ignored: U.S.A., St.Vincent-Grenadines, Sao Tome, Burma, Australia, Puerto Rico, Taiwan, Heaven, Martinique, Sumatra, Sulawesi, DR Congo
+
+Needing to be fixed:
+ - Trinidad and Tobago are separate in our data, so we will duplicate this row for those
+ - St. Lucia is spelled out
+ - Principe is combined as Sao Tome and Principe (like T&T)
+ - Congo is listed as "Republic of the Congo"
+ - Vietnam is not in the data, so will need to manually look for this data
+
+*After spending an hour trying to figure out how to get R to duplicate a row, and then change just one instance of it, and failing, I am giving up and just doing the string changes in a spreadsheet (about 60 seconds) and reimporting it. I also added Vietnam's data into it.*
+
+```{r production after corrections}
+rm(tmp_countries)
+rm(tmp_prod)
+rm(xls_prod)
+xls_prod2 <- read_excel("cocoaproductionRAW2.xlsx")
+setdiff(allratings$origin,xls_prod2$Country )
+```
+
+Now let's add a column for the production risk based on their most recent years growth and 5 years growth. If both of these are negative numbers, we'll flag them as risky for long term sources.
+
+```{r flagging dropping production}
+
+xls_prod2 %<>% mutate(prod_risk = (xls_prod2$YoY < 0 &  xls_prod2$`5‑years CAGR`<0))
+View(xls_prod2)
+```
+
+Let's join this new data into the contenders df now:
+
+```{r add prod_risk to contender df}
+contenders <- merge(x = contenders, y = xls_prod2[,c("Country","prod_risk")],by.x="origin", by.y="Country" )
+```
+
+Let's now join in the region for importer selection:
+```{r add region to contender df}
+contenders <- merge(x = contenders, y = xls_regions[,c("Country","Region")],by.x="origin", by.y="Country" )
+```
+
+Now we can assess the top contenders based on ratings, production trend, and importer selection:
+```{r reviewing top contenders}
+contenders %>%
+  arrange(-mean) %>%
+  print(n = 30) 
+```
+The Solomon Island look like a winner, given their high score, although it's one of the few from that region, so there is the question of importing.
+
+There are several well ranked ones from the Caribbean, but most of those have a supply risk from declining production.
+
+But our job is just to summarize the information for the buyers at Whizzo to make an informed decision, so let's make some visuals that we can also use for our presentations.
+
+```{r visuals: ratings}
+p <- ggplot(contenders, aes(origin, mean)) +
+  geom_col()
+p
+```
+
+We can certainly improve on that.  Let's add sorting, change the "mean" label to be more logical, and angle the x-axis text to fit better.
+
+```{r better origins graph}
+contenders %>%
+  ggplot(aes(x=reorder(origin,-mean), y = mean)) +
+  geom_col() + 
+  labs(x="Cocoa Origin", y="Average Rating (z-score)") +
+  theme(axis.text.x = element_text(angle=70))
+```
+
+We'll make a couple versions of this for the production or importer data.
+
+First let's flag the production ones in red if they are a production risk
+
+```{r ratings with production risk}
+contenders %>%
+  ggplot(aes(x=reorder(origin,-mean), y = mean, fill=factor(ifelse(prod_risk,"Declining","Growing")))) +
+  geom_col() + 
+  scale_fill_manual(name = "Production", values=c("firebrick2","grey25")) +
+  labs(x="Cocoa Origin", y="Average Rating (z-score)", title = "Cocoa Ratings Showing Production Risks") +
+  theme(axis.text.x = element_text(angle=70,hjust=1,vjust=+1.15), axis.ticks.x = element_blank())
+```
+
+Now, let's make another one, stripping out the diminishing production ones and color coding the rest based on importer. We'll use some color-blind suggested color palate options.
+
+```{r ratings with importer region}
+cbp1 <- c("#999999", "#E69F00", "#56B4E9", "#009E73",
+          "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+contenders %>%
+  filter(prod_risk==FALSE) %>%
+  ggplot(aes(x=reorder(origin,-mean), y = mean, fill=Region)) +
+  geom_col() + 
+  scale_fill_manual(values = cbp1) + 
+  labs(x="Cocoa Origin", y="Average Rating (z-score)", title = "Cocoa Ratings Showing Importer Region", fill = "Importer Region", subtitle = "(Production risks removed)") +
+  theme(axis.text.x = element_text(angle=70,hjust=1,vjust=+1.15), axis.ticks.x = element_blank())
+
+```
+
+While this is a lot of information, it captures almost all of their requirements. We can solidly suggest the Solomon Islands if they want to offer a highly rated bar, and while they are doing so, they could also include Papua New Guinea from the same importers, although they will perhaps want to spin its lower ratings with some marketing ("primitive"? "intense"? or the like) or maybe include it a gourmet chocolate tasting assortment. Again, not our job to make those types of decisions.
+
+Then for a second source the choice will come down to Africa with Congo, Madagascar, and Principe (and optionally Tanzania) or with the Latin American origins including Venezuela, Guatemala, Belize,and Nicaragua.
+
+Vietnam scores well, but it's the only SE Asian origin to do so, so unless another importer is able to carry their beans, it likely doesn't make sense to set up a source just for them.
+
+To help them with making these choices, let's make an additional plot that shows the confidence in each of those ratings - the ranking from a country of origin with 100 sampled bars can be assumed to be more accurate in general than one with only 10 bars.
+
+```{r show distribution of ratings}
+viable <- contenders %>%
+  filter(prod_risk == FALSE) %>%
+  filter(mean >= 0)
+
+allratings %>%
+  filter(origin %in% viable$origin) %>%
+  ggplot(aes(x=reorder(origin,-zrate, mean), y=zrate)) +
+  geom_violin(aes(color=origin)) +
+  geom_jitter(height = 0.2, width = 0.15) +
+  labs(x="Cocoa Origin", y="Average Rating (z-score)", title = "Distribution of Cocoa Ratings", fill = "origin", subtitle = "(Every origin has winners and losers)") +
+  theme(axis.text.x = element_text(angle=70,hjust=1,vjust=+1.15), axis.ticks.x = element_blank(), legend.position = "none")
+```
+
+So given that there is a wide range of possible scoring withing each origin, let's help seed the selection by figuring out the highest scoring varietals per origin.
+
+```{r build top varietals list}
+allratings %>%
+  filter(origin %in% viable$origin) %>%
+  filter(varietal != "Blend" & is.na(varietal) == FALSE) %>%
+  mutate(combokey = paste(origin,":",lapply(strsplit(varietal,", "), function(x) x[1]), sep="")) %>%
+  group_by(origin, combokey) %>%
+  summarise(mean_var = round(mean(zrate),2),var_cnt = n()) %>%
+  filter(mean_var >= 0.5) %>%
+  arrange(origin, desc(mean_var)) %>%
+  rename("country:varietal" = "combokey","avg_zscore"="mean_var", "num_samples" = "var_cnt") -> top_varietals
+View(top_varietals, title="Top Varietals")
+```
+
+
+So that produces a dataset of all the decently scoring varietals (having a mean score > 0.5) for each origin country. They can use that in dialogue with the importers to see if they have access to any of the better ranked cocoa bean varieties. Let's export this as a spreadsheet so we can provide that to them.
+```{r export varietals list}
+#install.packages("openxlsx", dependencies = TRUE)
+library("openxlsx")
+write.xlsx(top_varietals, file="topvarietalsOUT.xlsx", colNames = TRUE)
+```
+
+With that, I think the data analysis is complete, and what remains is to summarize the findings in a presentation with specific recommendations.
