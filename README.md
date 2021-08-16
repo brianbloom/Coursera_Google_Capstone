@@ -11,9 +11,9 @@ My assignment was to identify what chocolate bean origins and varietals were mos
 ## Includes
 - raw spreadsheet files containing chocolate rating scores and cocoa production data
 - some interim spreadsheets used for holding cleaned up data
-- R Markdown notebook (RStudio .rmd format) with all steps performed for analysis
-- A supplemental R script file that was used for some exploratory analysis (all useful scripts were also replicated in the notebook)
-- A Impress presentation summarizing the findings of the analysis
+- [R Markdown notebook](WhizzoCapstone.rmd) (RStudio .rmd format) with all steps performed for analysis
+- A [supplemental R script file](Whizzoworking.R) that was used for some exploratory analysis (all useful scripts were also replicated in the notebook)
+- A [Impress presentation](Whizzopresentation.odp) summarizing the findings of the analysis
 
 ## Data sources
 ### Flavors of Cacao database
